@@ -17,24 +17,24 @@ import {
 
 export const DEFAULT_ENDPOINT_URL = `${location.protocol}//${location.hostname}:2023/graphql`
 
-export const DEFAULT_LOG_LEVEL = LogLevel.info
+export const DEFAULT_LOG_LEVEL = LogLevel.warn
 export const DEFAULT_TPROXY_PORT = 12345
 export const DEFAULT_TPROXY_PORT_PROTECT = true
 export const DEFAULT_SO_MARK_FROM_DAE = 0
 export const DEFAULT_ALLOW_INSECURE = false
-export const DEFAULT_CHECK_INTERVAL_SECONDS = 30
-export const DEFAULT_CHECK_TOLERANCE_MS = 0
-export const DEFAULT_SNIFFING_TIMEOUT_MS = 100
+export const DEFAULT_CHECK_INTERVAL_SECONDS = 600
+export const DEFAULT_CHECK_TOLERANCE_MS = 10
+export const DEFAULT_SNIFFING_TIMEOUT_MS = 300
 export const DEFAULT_UDP_CHECK_DNS = ['dns.google:53', '8.8.8.8', '2001:4860:4860::8888']
 export const DEFAULT_TCP_CHECK_URL = ['http://cp.cloudflare.com', '1.1.1.1', '2606:4700:4700::1111']
-export const DEFAULT_DIAL_MODE = DialMode.domain
-export const DEFAULT_TCP_CHECK_HTTP_METHOD = TcpCheckHttpMethod.HEAD
+export const DEFAULT_DIAL_MODE = DialMode.domainP
+export const DEFAULT_TCP_CHECK_HTTP_METHOD = TcpCheckHttpMethod.CONNECT
 export const DEFAULT_DISABLE_WAITING_NETWORK = false
 export const DEFAULT_AUTO_CONFIG_KERNEL_PARAMETER = true
 export const DEFAULT_TLS_IMPLEMENTATION = TLSImplementation.tls
 export const DEFAULT_UTLS_IMITATE = UTLSImitate.chrome_auto
 export const DEFAULT_MPTCP = false
-export const DEFAULT_ENABLE_LOCAL_TCP_FAST_REDIRECT = false
+export const DEFAULT_ENABLE_LOCAL_TCP_FAST_REDIRECT = true
 export const DEFAULT_PPROF_PORT = 0
 export const DEFAULT_BANDWIDTH_MAX_TX = '200 mbps'
 export const DEFAULT_BANDWIDTH_MAX_RX = '1 gbps'
@@ -54,7 +54,7 @@ export const DEFAULT_CONFIG_WITH_LAN_INTERFACEs = (interfaces: string[] = []): G
   checkInterval: `${DEFAULT_CHECK_INTERVAL_SECONDS}s`,
   checkTolerance: `${DEFAULT_CHECK_TOLERANCE_MS}ms`,
   sniffingTimeout: `${DEFAULT_SNIFFING_TIMEOUT_MS}ms`,
-  lanInterface: interfaces,
+  lanInterface: ['br-lan'],
   wanInterface: ['auto'],
   udpCheckDns: DEFAULT_UDP_CHECK_DNS,
   tcpCheckUrl: DEFAULT_TCP_CHECK_URL,
@@ -73,22 +73,45 @@ export const DEFAULT_CONFIG_WITH_LAN_INTERFACEs = (interfaces: string[] = []): G
 export const DEFAULT_GROUP_POLICY = Policy.MinMovingAvg
 
 export const DEFAULT_ROUTING = `
-pname(NetworkManager, systemd-resolved, dnsmasq) -> must_direct
-dip(geoip:private) -> direct
-dip(geoip:cn) -> direct
-domain(geosite:cn) -> direct
+pname(dnsmasq) && dport(53) && l4proto(udp) -> must_direct
+pname(zerotier-one) -> must_direct
+dip(169.254.0.0/16, 'fe80::/10') -> must_direct
+
+l4proto(udp) && dport(443) && !dip(geoip:private, geoip:cn) -> block
+dip(224.0.0.0/3, 'ff00::/8') -> direct
+domain(keyword: synology, keyword: ddns) -> direct
+
+domain(geosite:private, geosite:geolocation-cn, geosite:apple-cn, geosite:category-games@cn, geosite:bing@cn) -> direct
+domain(geosite:category-entertainment) && !domain(geosite:category-entertainment@cn)  -> ${DEFAULT_GROUP_NAME}
+domain(geosite:category-ai-chat-!cn, geosite:bing) -> ${DEFAULT_GROUP_NAME}
+
+domain(geosite:gfw) -> ${DEFAULT_GROUP_NAME}
+dip(geoip:private, geoip:cn) -> direct
+
 fallback: ${DEFAULT_GROUP_NAME}
 `.trim()
 
 export const DEFAULT_DNS = `
+fixed_domain_ttl {
+  dns.google: 86400
+}
 upstream {
-  alidns: 'udp://223.5.5.5:53'
-  googledns: 'tcp+udp://8.8.8.8:53'
+  localdns_trust: 'udp://127.0.0.1:53'
+  localdns: 'udp://127.0.0.1:53'
+  overseadns: 'udp://dns.google'
 }
 routing {
   request {
-    qname(geosite:cn) -> alidns
-    fallback: googledns
+    qtype(https) -> reject
+    qname(geosite:private) -> localdns_trust
+    qname(geosite:gfw) -> overseadns
+    qname(geosite:bing, geosite:category-ai-chat-!cn) && !qname(geosite:bing@cn) -> overseadns
+    fallback: localdns
+  }
+  response {
+    upstream(overseadns, localdns_trust) -> accept
+    ip(geoip:cn) -> localdns_trust
+    fallback: overseadns
   }
 }
 `.trim()
